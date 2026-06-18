@@ -221,13 +221,22 @@ MOSS-TTSD 和 MOSS-TTS-Realtime 的语言覆盖请以各自 model card 为准。
 <a id="environment-setup"></a>
 ### 环境准备
 
-建议使用干净的 Python 环境。
+建议使用干净、隔离的 Python 环境，并使用 **Transformers 5.0.0**，以避免依赖冲突。
 
 #### 使用 Conda
 
 ```bash
 conda create -n moss-tts python=3.12 -y
 conda activate moss-tts
+```
+
+安装 FFmpeg 系统依赖（`torchcodec` 音频 I/O 需要）：
+
+```bash
+# Debian/Ubuntu
+sudo apt-get install -y ffmpeg
+# macOS
+brew install ffmpeg
 ```
 
 安装全部依赖：
@@ -288,11 +297,12 @@ MAX_JOBS=4 uv pip install --torch-backend cu128 -e ".[torch-runtime,flash-attn]"
 <a id="moss-tts-basic-usage"></a>
 ### MOSS‑TTS 基础用法
 
-如果你更希望使用 Gradio 界面，我们为 4 个主模型提供了对应脚本：
+如果你更希望使用 Gradio 界面，我们为主要模型提供了对应脚本：
 
 | Model | Script |
 |---|---|
 | MOSS-TTS | [clis/moss_tts_app.py](clis/moss_tts_app.py) |
+| MOSS-TTS-Local-Transformer-v1.5 | [clis/moss_tts_local_v1.5_app.py](clis/moss_tts_local_v1.5_app.py) |
 | MOSS-TTSD | [clis/moss_ttsd_app.py](clis/moss_ttsd_app.py) |
 | MOSS-VoiceGenerator | [clis/moss_voice_generator_app.py](clis/moss_voice_generator_app.py) |
 | MOSS-SoundEffect | [clis/moss_sound_effect_app.py](clis/moss_sound_effect_app.py) |
@@ -422,7 +432,7 @@ with torch.no_grad():
 
 ```
 
-各模型的完整使用方式请参考对应的 model card。
+各模型的完整使用方式请参考对应的 model card。48 kHz 立体声 Local-Transformer v1.5 checkpoint 和实时流式解码请参考 [`moss_tts_local_v1.5/`](moss_tts_local_v1.5/README.md)。
 
 <a id="fine-tuning"></a>
 ## 微调
@@ -655,7 +665,7 @@ $T_{\text{LLM-first-sentence}} + T_{\text{MOSS-TTS-Realtime-TTFB}} = 197ms + 180
 
 
 <a id="audio-tokenizer"></a>
-## 语音编解码器
+## MOSS—Audio-Tokenizer
 
 <a id="audio-tokenizer-intro"></a>
 ### 介绍
@@ -676,9 +686,11 @@ $T_{\text{LLM-first-sentence}} + T_{\text{MOSS-TTS-Realtime-TTFB}} = 197ms + 180
 <a id="model-weights"></a>
 ### 模型权重
 
-| Model | Hugging Face | ModelScope |
-|:-----:|:------------:|:----------:|
-| **MOSS-Audio-Tokenizer** | [![Hugging Face](https://img.shields.io/badge/Huggingface-Model-orange?logo=huggingface)](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-Tokenizer) | [![ModelScope](https://img.shields.io/badge/ModelScope-Model-7B61FF?logo=modelscope&logoColor=white)](https://modelscope.cn/models/openmoss/MOSS-Audio-Tokenizer) |
+| Model | Sampling Rate | Channels | Hugging Face | ModelScope |
+|:-----:|:-------------:|:--------:|:------------:|:----------:|
+| **MOSS-Audio-Tokenizer** | 24kHz | 1 channel (mono) | [![Hugging Face](https://img.shields.io/badge/Huggingface-Model-orange?logo=huggingface)](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-Tokenizer) | [![ModelScope](https://img.shields.io/badge/ModelScope-Model-7B61FF?logo=modelscope&logoColor=white)](https://modelscope.cn/models/openmoss/MOSS-Audio-Tokenizer) |
+| **MOSS-Audio-Tokenizer-v2** | 48kHz | 2 channels (stereo) | [![Hugging Face](https://img.shields.io/badge/Huggingface-Model-orange?logo=huggingface)](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-Tokenizer-v2) | [![ModelScope](https://img.shields.io/badge/ModelScope-Model-7B61FF?logo=modelscope&logoColor=white)](https://modelscope.cn/models/openmoss/MOSS-Audio-Tokenizer-v2) |
+| **MOSS-Audio-Tokenizer-Nano** | 48kHz | 2 channels (stereo) | [![Hugging Face](https://img.shields.io/badge/Huggingface-Model-orange?logo=huggingface)](https://huggingface.co/OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano) | [![ModelScope](https://img.shields.io/badge/ModelScope-Model-7B61FF?logo=modelscope&logoColor=white)](https://modelscope.cn/models/openmoss/MOSS-Audio-Tokenizer-Nano) |
 
 ### 重建质量客观评测
 
