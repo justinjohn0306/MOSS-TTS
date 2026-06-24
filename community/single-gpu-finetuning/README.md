@@ -9,9 +9,9 @@ A community toolkit for **full finetuning** of MOSS-TTS-Local v1.5 (~4.55B) on a
 
 v1.5 has ~4.55B parameters, so plain bf16 AdamW needs ~36 GB (weights + grads + optimizer)
 and will not fit on a 24 GB card. This toolkit uses **ZeRO-3 with CPU offload** to park the
-params and optimizer state in system RAM, keeping GPU usage under 24 GB. It also bundles a
-dataset converter, an accelerate-config generator, a checkpoint post-processor, an inference
-script, and — for Windows — the shims and build needed to run DeepSpeed without NCCL/libuv.
+params and optimizer state in system RAM, keeping GPU usage under 24 GB. It also bundles an
+accelerate-config generator, a checkpoint post-processor, an inference script, and — for
+Windows — the shims and build needed to run DeepSpeed without NCCL/libuv.
 
 ## Requirements
 
@@ -41,21 +41,15 @@ and installs it. See [Windows notes](#windows-notes) for what it handles and why
 
 ## Data preparation
 
-**1. Convert your transcripts to JSONL.** The converter auto-detects two layouts — a
-`audio_path|text` filelist, or LJSpeech's `ID|raw|normalized`:
+**1. Build a raw JSONL** — one object per line. Required fields are `audio` (path to the
+target clip) and `text` (its exact transcript). `language` is recommended (a full tag such
+as `English`); an optional `ref_audio` (a single reference clip) enables voice cloning.
+Relative `audio` paths resolve against the JSONL's folder.
 
-```bash
-# regular text->speech pairs
-python convert_dataset.py --input /path/to/metadata.csv --output data/train_raw.jsonl
-
-# voice cloning: every record gets one fixed reference clip
-python convert_dataset.py --input /path/to/metadata.csv --output data/train_ref.jsonl \
-    --mode single-ref --ref-audio wavs/1.wav --language English
+```jsonl
+{"audio": "wavs/1.wav", "text": "Hello there, how are you?", "language": "English"}
+{"audio": "wavs/2.wav", "text": "A cloned line.", "ref_audio": "wavs/ref.wav", "language": "English"}
 ```
-
-Options: `--mode {regular,single-ref}`, `--ref-audio <path|filename|clip-id>`,
-`--language <tag>`, `--text-field {normalized,raw}`, `--audio-root <dir>`, `--limit N`,
-`--relative`.
 
 **2. Encode audio to codes** with the repo's `prepare_data.py`:
 
@@ -139,7 +133,6 @@ omits the Windows launcher scripts) with only `cpu_adam` enabled and `DS_SKIP_CU
 
 ## Files
 
-- `convert_dataset.py` — transcripts → JSONL (filelist or LJSpeech), regular / single-ref modes.
 - `make_ds_config.py` — writes the ZeRO-3 offload accelerate config with a chosen grad-accum.
 - `run_train.sh` / `run_train.bat` — single-GPU offload training launchers (Linux / Windows).
 - `fix_checkpoint_keys.py` — strips the gradient-checkpointing key prefix from saved checkpoints.
