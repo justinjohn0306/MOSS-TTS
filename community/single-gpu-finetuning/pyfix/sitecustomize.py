@@ -1,20 +1,127 @@
 """Auto-loaded fixes (via PYTHONPATH) for single-GPU DeepSpeed ZeRO training on native
 Windows. Inert on Linux/macOS. Windows lacks NCCL and PyTorch's Windows build lacks libuv,
-so DeepSpeed's distributed paths break in three ways -- all patched here:
+so DeepSpeed's distributed paths break in three ways -- all patched here -- plus we quiet a
+handful of benign Windows-vs-Linux messages that look alarming but are harmless.
 
-1) No libuv: torch.distributed's rendezvous creates TCPStore forcing use_libuv=True, but the
-   Windows build has none -> DistStoreError. The USE_LIBUV=0 env var is ignored on some paths;
-   we hard-force use_libuv=False.
+Distributed fixes (single GPU only; real multi-GPU needs NCCL on Linux/WSL):
+1) No libuv: torch.distributed's rendezvous forces TCPStore(use_libuv=True) -> DistStoreError.
+   Hard-force use_libuv=False.
+2) No NCCL: accelerate picks backend "nccl" whenever CUDA is available. Force "gloo".
+3) gloo can't do GPU collectives (reduce_scatter/all_reduce on CUDA crash). At world_size==1
+   every collective is a no-op/local copy, so short-circuit them.
 
-2) No NCCL: accelerate picks backend "nccl" whenever CUDA is available; Windows has none.
-   Force the distributed backend to "gloo".
-
-3) gloo can't do GPU collectives: gloo's reduce_scatter / all_reduce on CUDA tensors crash.
-   On a SINGLE process (world_size == 1) every collective is a no-op or a local copy, so we
-   short-circuit them. Single-GPU only -- real multi-GPU needs NCCL (Linux/WSL), where these
-   patches do nothing.
+Cosmetic noise suppression (so the console isn't full of scary-looking non-errors):
+4) DeepSpeed probes every op's is_compatible() at import; on Windows the async_io/GDS probes
+   shell out to the MSVC toolchain to test-link aio.lib/cufile.lib and print
+   "LINK : fatal error LNK1181: cannot open input file 'aio.lib'/'cufile.lib'" to stdout.
+   Those ops don't exist on Windows and we don't use them -> stdout muted during that probe.
+5) torch.distributed.elastic logs SIGHUP/SIGQUIT signal-handler tracebacks and a
+   "Redirects are currently not supported" note on Windows -> filtered out.
+6) c10d prints a "[W] socket ... failed to connect ... 10049" rendezvous warning ->
+   TORCH_CPP_LOG_LEVEL=ERROR (set before torch imports).
 """
 import sys
+
+
+def _quiet_windows_noise():
+    """(5) Drop the benign torch.distributed.elastic warnings (SIGHUP/SIGQUIT, redirects)."""
+    import logging
+
+    class _Drop(logging.Filter):
+        _pats = (
+            "Redirects are currently not supported",
+            "Failed to register signal handler",
+            "module 'signal' has no attribute",
+        )
+
+        def filter(self, record):
+            try:
+                msg = record.getMessage()
+            except Exception:
+                return True
+            return not any(p in msg for p in self._pats)
+
+    _drop = _Drop()
+    for name in (
+        "torch.distributed.elastic.multiprocessing.api",
+        "torch.distributed.elastic.multiprocessing.redirects",
+    ):
+        logging.getLogger(name).addFilter(_drop)
+
+
+def _run_with_stdout_muted(fn):
+    """Run fn() with process stdout redirected to NUL at both the CRT-fd and the Win32-handle
+    level -- the latter so child processes (cl.exe/link.exe) are muted too, since on Windows a
+    subprocess inherits the parent's STD_OUTPUT_HANDLE, not the C runtime's fd 1. Restored after."""
+    import os
+    import ctypes
+    import msvcrt
+
+    STD_OUTPUT_HANDLE = 0xFFFFFFF5  # (DWORD)-11
+    k32 = ctypes.windll.kernel32
+    k32.GetStdHandle.restype = ctypes.c_void_p
+    k32.SetStdHandle.argtypes = (ctypes.c_uint, ctypes.c_void_p)
+
+    try:
+        sys.stdout.flush()
+    except Exception:
+        pass
+
+    devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    saved_fd = os.dup(1)
+    saved_handle = k32.GetStdHandle(STD_OUTPUT_HANDLE)
+    try:
+        os.dup2(devnull_fd, 1)
+        k32.SetStdHandle(STD_OUTPUT_HANDLE, msvcrt.get_osfhandle(devnull_fd))
+        return fn()
+    finally:
+        try:
+            sys.stdout.flush()
+        except Exception:
+            pass
+        os.dup2(saved_fd, 1)
+        if saved_handle:
+            k32.SetStdHandle(STD_OUTPUT_HANDLE, saved_handle)
+        os.close(saved_fd)
+        os.close(devnull_fd)
+
+
+def _silence_ds_op_probes():
+    """(4) `deepspeed/git_version_info.py` calls is_compatible() on every op at import; the
+    async_io/GDS probes test-link aio.lib/cufile.lib via MSVC, which prints LNK1181 "fatal
+    error" lines to stdout (DeepSpeed only redirects stderr there, so they leak on Windows).
+    The ops genuinely can't build on Windows and we don't use them.
+
+    Rather than patch is_compatible per-builder (the probed class varies with the install
+    layout -- `op_builder.*` for source installs, `deepspeed.ops.op_builder.*` otherwise), we
+    install a one-shot meta-path finder that runs `git_version_info` with stdout muted. That
+    swallows the probe's compile/link output (and the child processes') no matter which class
+    is probed; the compatibility result is unchanged (False)."""
+    import importlib.abc
+    import importlib.machinery
+
+    TARGET = "deepspeed.git_version_info"
+
+    class _Finder(importlib.abc.MetaPathFinder):
+        def find_spec(self, fullname, path=None, target=None):
+            if fullname != TARGET:
+                return None
+            spec = importlib.machinery.PathFinder.find_spec(fullname, path)
+            if spec is None or not getattr(spec, "loader", None) or not hasattr(spec.loader, "exec_module"):
+                return spec
+            try:
+                sys.meta_path.remove(self)  # one-shot: only this module needs muting
+            except ValueError:
+                pass
+            _orig_exec = spec.loader.exec_module
+
+            def _exec(module):
+                _run_with_stdout_muted(lambda: _orig_exec(module))
+
+            spec.loader.exec_module = _exec
+            return spec
+
+    sys.meta_path.insert(0, _Finder())
 
 
 def _force_no_libuv():
@@ -172,7 +279,16 @@ def _shortcircuit_collectives():
 
 
 if sys.platform == "win32":
-    for _fn in (_force_no_libuv, _force_gloo_backend, _shortcircuit_collectives):
+    import os
+    # (6) set before torch imports so c10d's C++ warnings (e.g. the socket 10049 note) are quiet
+    os.environ.setdefault("TORCH_CPP_LOG_LEVEL", "ERROR")
+    for _fn in (
+        _quiet_windows_noise,
+        _silence_ds_op_probes,
+        _force_no_libuv,
+        _force_gloo_backend,
+        _shortcircuit_collectives,
+    ):
         try:
             _fn()
         except Exception as _e:  # pragma: no cover

@@ -121,6 +121,11 @@ sets this) and are **inert on Linux**:
 - Short-circuit collectives at `world_size == 1` — gloo can't do GPU `reduce_scatter`/
   `all_reduce`; for a single GPU they are no-ops. **Single-GPU only** — multi-GPU needs
   NCCL (Linux or WSL2).
+- Mute the benign Windows-only noise so the console isn't alarming: DeepSpeed's import-time op
+  probe test-links `aio.lib`/`cufile.lib` (which don't exist on Windows) and the MSVC linker
+  prints `LNK1181: cannot open input file` to stdout; the elastic launcher logs a "Redirects
+  are currently not supported" note. Both are harmless and are filtered out — nothing is built
+  or used from those ops here.
 
 `build_deepspeed_windows.bat` builds DeepSpeed from the GitHub source tag (the PyPI sdist
 omits the Windows launcher scripts) with only `cpu_adam` enabled and `DS_SKIP_CUDA_CHECK=1`
