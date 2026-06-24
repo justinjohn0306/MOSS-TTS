@@ -101,10 +101,14 @@ checkpoint by ear; reduce epochs (or the learning rate) if it overfits.
 
 ```bash
 python infer.py "Text to speak." out.wav output/sft/checkpoint-last
+
+# voice cloning: condition on a reference clip (the codec encodes it; the model clones that voice)
+python infer.py "Text to speak." out.wav output/sft/checkpoint-last --ref reference.wav
 ```
 
-Drop the last argument to use the base model for comparison. The script loads both the model
-and the codec onto the GPU.
+Drop the model argument to use the base model for comparison. Both the model and the codec run
+on the GPU. A finetune trained in regular mode adapts the default voice; pass `--ref` to clone a
+specific reference clip instead.
 
 ## Windows notes
 
